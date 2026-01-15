@@ -10,6 +10,8 @@
     <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <!-- LeanCloud SDK -->
+    <script src="https://unpkg.com/leancloud-storage@4.17.3/dist/av-min.js"></script>
     <!-- 统一的 Tailwind 配置 -->
     <script>
         tailwind.config = {
@@ -223,16 +225,38 @@
 
         <!-- 导航菜单 -->
         <nav class="py-4 border-b border-gray-800">
-            <div class="flex space-x-6">
-                <button id="nav-dashboard" class="nav-btn px-3 py-2 text-white hover:text-primary transition-all-300 border-b-2 border-transparent hover:border-primary cursor-pointer">
-                    <i class="fa fa-home mr-2"></i>工作台
-                </button>
-                <button id="nav-add-log" class="nav-btn px-3 py-2 text-white hover:text-primary transition-all-300 border-b-2 border-transparent hover:border-primary cursor-pointer">
-                    <i class="fa fa-plus mr-2"></i>添加记录
-                </button>
-                <button id="nav-reports" class="nav-btn px-3 py-2 text-white hover:text-primary transition-all-300 border-b-2 border-transparent hover:border-primary cursor-pointer">
-                    <i class="fa fa-bar-chart mr-2"></i>数据报告
-                </button>
+            <div class="flex justify-between items-center">
+                <div class="flex space-x-6">
+                    <button id="nav-dashboard" class="nav-btn px-3 py-2 text-white hover:text-primary transition-all-300 border-b-2 border-transparent hover:border-primary cursor-pointer">
+                        <i class="fa fa-home mr-2"></i>工作台
+                    </button>
+                    <button id="nav-add-log" class="nav-btn px-3 py-2 text-white hover:text-primary transition-all-300 border-b-2 border-transparent hover:border-primary cursor-pointer">
+                        <i class="fa fa-plus mr-2"></i>添加记录
+                    </button>
+                    <button id="nav-reports" class="nav-btn px-3 py-2 text-white hover:text-primary transition-all-300 border-b-2 border-transparent hover:border-primary cursor-pointer">
+                        <i class="fa fa-bar-chart mr-2"></i>数据报告
+                    </button>
+                </div>
+                
+                <!-- 用户信息区域 -->
+                <div class="flex items-center space-x-4">
+                    <div id="user-info" class="flex items-center space-x-2">
+                        <span class="text-gray-400 text-sm">当前用户:</span>
+                        <span id="current-username" class="text-white text-sm font-medium">未设置</span>
+                        <button id="change-username-btn" class="text-primary text-xs hover:text-primary/80 transition-colors">
+                            <i class="fa fa-pencil"></i>
+                        </button>
+                    </div>
+                    <div id="username-input" class="flex items-center space-x-2 hidden">
+                        <input type="text" id="username" placeholder="输入用户名" class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white w-28">
+                        <button id="save-username-btn" class="px-2 py-1 bg-primary text-white rounded text-xs hover:bg-primary/80 transition-colors">
+                            保存
+                        </button>
+                        <button id="cancel-username-btn" class="px-2 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
+                            取消
+                        </button>
+                    </div>
+                </div>
             </div>
         </nav>
 
@@ -604,12 +628,218 @@
     </div>
 
     <script>
-        // 全局变量
+        // 初始化工作记录数据
         let worklogs = JSON.parse(localStorage.getItem('minimal_worklogs')) || [];
         let currentReport = null;
+        let currentUsername = localStorage.getItem('minimal_workflow_username') || '未设置';
+        
+        // LeanCloud 相关变量
+        let AV = null;
+        let WorkLog = null;
+        let leancloudInitialized = false;
+        
+        // 尝试初始化 LeanCloud
+        try {
+            // LeanCloud 配置和初始化
+            // 注意：这里使用的是演示配置，请替换为您自己的 LeanCloud 应用凭证
+            // 您可以在 LeanCloud 控制台创建应用后获取 App ID 和 App Key
+            const APP_ID = 'your-leancloud-app-id';
+            const APP_KEY = 'your-leancloud-app-key';
+            const SERVER_URL = 'https://your-leancloud-server-url.com';
+            
+            // 检查 LeanCloud SDK 是否加载成功
+            if (window.AV) {
+                AV = window.AV;
+                // 初始化 LeanCloud
+                AV.init({
+                    appId: APP_ID,
+                    appKey: APP_KEY,
+                    serverURL: SERVER_URL
+                });
+                
+                // LeanCloud 工作记录类
+                WorkLog = AV.Object.extend('WorkLog');
+                leancloudInitialized = true;
+                console.log('LeanCloud 初始化成功');
+            } else {
+                console.error('LeanCloud SDK 未加载成功');
+            }
+        } catch (error) {
+            console.error('LeanCloud 初始化失败:', error);
+            leancloudInitialized = false;
+        }
+        
+        // 初始化用户名显示
+        function initUsername() {
+            document.getElementById('current-username').textContent = currentUsername;
+            
+            // 设置用户名输入框事件
+            const changeUsernameBtn = document.getElementById('change-username-btn');
+            const saveUsernameBtn = document.getElementById('save-username-btn');
+            const cancelUsernameBtn = document.getElementById('cancel-username-btn');
+            const usernameInput = document.getElementById('username');
+            
+            // 点击修改用户名按钮
+            changeUsernameBtn.addEventListener('click', function() {
+                document.getElementById('user-info').classList.add('hidden');
+                document.getElementById('username-input').classList.remove('hidden');
+                usernameInput.value = currentUsername === '未设置' ? '' : currentUsername;
+                usernameInput.focus();
+            });
+            
+            // 点击保存用户名按钮
+            saveUsernameBtn.addEventListener('click', function() {
+                const newUsername = usernameInput.value.trim() || '未设置';
+                currentUsername = newUsername;
+                localStorage.setItem('minimal_workflow_username', newUsername);
+                document.getElementById('current-username').textContent = newUsername;
+                document.getElementById('user-info').classList.remove('hidden');
+                document.getElementById('username-input').classList.add('hidden');
+                showToast('用户名已更新！');
+            });
+            
+            // 点击取消用户名按钮
+            cancelUsernameBtn.addEventListener('click', function() {
+                document.getElementById('user-info').classList.remove('hidden');
+                document.getElementById('username-input').classList.add('hidden');
+            });
+            
+            // 按下回车保存用户名
+            usernameInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    saveUsernameBtn.click();
+                }
+            });
+        }
         let contentChart = null;
         let dailyChart = null;
 
+        // 从 LeanCloud 加载工作记录
+        function loadWorklogsFromLeanCloud() {
+            console.log('从 LeanCloud 加载工作记录...');
+            
+            // 检查 LeanCloud 是否初始化成功
+            if (!leancloudInitialized) {
+                console.log('LeanCloud 未初始化，直接使用本地存储数据');
+                worklogs = JSON.parse(localStorage.getItem('minimal_worklogs')) || [];
+                return Promise.resolve(worklogs);
+            }
+            
+            try {
+                const query = new AV.Query('WorkLog');
+                query.descending('createdAt'); // 按创建时间降序排列
+                
+                return query.find().then(results => {
+                    // 将 LeanCloud 对象转换为普通 JavaScript 对象
+                    worklogs = results.map(result => ({
+                        id: result.id,
+                        date: result.get('date'),
+                        title: result.get('title'),
+                        description: result.get('description'),
+                        tags: result.get('tags') || [],
+                        images: result.get('images') || [],
+                        createdAt: result.get('createdAt').toISOString()
+                    }));
+                    
+                    console.log('从 LeanCloud 加载了', worklogs.length, '条工作记录');
+                    return worklogs;
+                }).catch(error => {
+                    console.error('从 LeanCloud 加载工作记录失败:', error);
+                    // 加载失败时使用本地存储作为备份
+                    worklogs = JSON.parse(localStorage.getItem('minimal_worklogs')) || [];
+                    console.log('使用本地存储数据，共', worklogs.length, '条记录');
+                    return worklogs;
+                });
+            } catch (error) {
+                console.error('LeanCloud 查询失败:', error);
+                worklogs = JSON.parse(localStorage.getItem('minimal_worklogs')) || [];
+                return Promise.resolve(worklogs);
+            }
+        }
+        
+        // 从URL解析分享数据
+        function parseShareDataFromUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const shareData = urlParams.get('share');
+            
+            if (shareData) {
+                try {
+                    // 解码分享数据
+                    const decodedData = decodeURIComponent(escape(atob(shareData)));
+                    const data = JSON.parse(decodedData);
+                    return data;
+                } catch (error) {
+                    console.error('解析分享数据失败:', error);
+                    return null;
+                }
+            }
+            return null;
+        }
+        
+        // 处理分享数据
+        function handleShareData(data) {
+            if (!data || !data.worklogs || !Array.isArray(data.worklogs)) {
+                showToast('分享链接无效！', 'error');
+                return;
+            }
+            
+            // 显示导入确认对话框
+            const dialog = document.createElement('div');
+            dialog.className = 'fixed inset-0 bg-black/90 z-50 flex items-center justify-center';
+            dialog.innerHTML = `
+                <div class="bg-gray-900 rounded-lg p-6 w-full max-w-md">
+                    <h3 class="text-xl font-light mb-4 text-white">导入分享数据</h3>
+                    <p class="text-gray-400 mb-4">
+                        检测到分享数据，包含 ${data.worklogs.length} 条工作记录，创建于 ${new Date(data.exportDate).toLocaleString()}。
+                    </p>
+                    <div class="space-y-4">
+                        <button id="import-share-merge-btn" class="w-full px-4 py-3 bg-primary hover:bg-blue-600 text-white rounded-lg btn-hover transition-all-300">
+                            <i class="fa fa-download mr-2"></i>合并到现有数据
+                        </button>
+                        <button id="import-share-replace-btn" class="w-full px-4 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-lg btn-hover transition-all-300">
+                            <i class="fa fa-refresh mr-2"></i>替换现有数据
+                        </button>
+                        <button id="cancel-share-import-btn" class="w-full px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg btn-hover transition-all-300">
+                            取消
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(dialog);
+            
+            // 合并数据按钮
+            document.getElementById('import-share-merge-btn').addEventListener('click', function() {
+                // 合并数据，避免重复
+                const existingIds = new Set(worklogs.map(log => log.id));
+                const newLogs = data.worklogs.filter(log => !existingIds.has(log.id));
+                
+                worklogs = [...worklogs, ...newLogs];
+                localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                renderWorkLogs();
+                updateStats();
+                
+                dialog.remove();
+                showToast(`成功导入 ${newLogs.length} 条新记录！`);
+            });
+            
+            // 替换数据按钮
+            document.getElementById('import-share-replace-btn').addEventListener('click', function() {
+                worklogs = data.worklogs;
+                localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                renderWorkLogs();
+                updateStats();
+                
+                dialog.remove();
+                showToast(`成功导入 ${data.worklogs.length} 条记录！`);
+            });
+            
+            // 取消按钮
+            document.getElementById('cancel-share-import-btn').addEventListener('click', function() {
+                dialog.remove();
+            });
+        }
+        
         // DOM 加载完成后初始化
         document.addEventListener('DOMContentLoaded', function() {
             // 设置默认日期为今天
@@ -622,9 +852,24 @@
             // 初始化事件监听
             setupEventListeners();
             
-            // 加载工作记录
-            renderWorkLogs();
-            updateStats();
+            // 初始化用户名显示
+            initUsername();
+            
+            // 检查URL是否包含分享数据
+            const shareData = parseShareDataFromUrl();
+            if (shareData) {
+                // 延迟显示导入对话框，让页面先初始化
+                setTimeout(() => {
+                    handleShareData(shareData);
+                }, 1000);
+            } else {
+                // 从 LeanCloud 加载工作记录
+                loadWorklogsFromLeanCloud().then(() => {
+                    // 加载工作记录后渲染
+                    renderWorkLogs();
+                    updateStats();
+                });
+            }
             
             // 初始化打字效果
             initTypingEffect();
@@ -1028,33 +1273,144 @@
                     images: images,
                     createdAt: new Date().toISOString()
                 };
-
-                // 添加到数组并保存
-                worklogs.push(worklog);
-                localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
-
-                // 重新渲染和更新统计
-                renderWorkLogs();
-                updateStats();
-
-                // 重置表单
-                document.getElementById('work-log-form').reset();
-                document.getElementById('log-date').value = date;
-                document.getElementById('image-preview').innerHTML = '';
-
-                showToast('工作记录保存成功！');
-                switchPage('dashboard');
+                
+                // 检查LeanCloud是否初始化成功
+                if (leancloudInitialized) {
+                    try {
+                        // 创建LeanCloud工作记录对象
+                        const workLog = new WorkLog();
+                        
+                        // 设置工作记录属性
+                        workLog.set({
+                            date: date,
+                            title: title,
+                            description: description,
+                            tags: tags ? tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
+                            images: images
+                        });
+                        
+                        // 保存到LeanCloud
+                        workLog.save().then(() => {
+                            console.log('工作记录保存到LeanCloud成功');
+                            
+                            // 重新从LeanCloud加载数据，确保数据同步
+                            return loadWorklogsFromLeanCloud();
+                        }).then(() => {
+                            // 更新本地存储作为备份
+                            localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                            
+                            // 重新渲染和更新统计
+                            renderWorkLogs();
+                            updateStats();
+                            
+                            // 重置表单
+                            document.getElementById('work-log-form').reset();
+                            document.getElementById('log-date').value = date;
+                            document.getElementById('image-preview').innerHTML = '';
+                            
+                            showToast('工作记录保存成功！');
+                            switchPage('dashboard');
+                        }).catch(error => {
+                            console.error('保存工作记录到LeanCloud失败:', error);
+                            
+                            // 保存到本地存储作为备用方案
+                            worklogs.push(worklog);
+                            localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                            
+                            renderWorkLogs();
+                            updateStats();
+                            
+                            document.getElementById('work-log-form').reset();
+                            document.getElementById('log-date').value = date;
+                            document.getElementById('image-preview').innerHTML = '';
+                            
+                            showToast('工作记录保存成功（使用本地存储）！');
+                            switchPage('dashboard');
+                        });
+                    } catch (error) {
+                        console.error('LeanCloud保存失败:', error);
+                        // 保存到本地存储作为备用方案
+                        worklogs.push(worklog);
+                        localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                        
+                        renderWorkLogs();
+                        updateStats();
+                        
+                        document.getElementById('work-log-form').reset();
+                        document.getElementById('log-date').value = date;
+                        document.getElementById('image-preview').innerHTML = '';
+                        
+                        showToast('工作记录保存成功（使用本地存储）！');
+                        switchPage('dashboard');
+                    }
+                } else {
+                    // LeanCloud未初始化，直接保存到本地存储
+                    worklogs.push(worklog);
+                    localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                    
+                    renderWorkLogs();
+                    updateStats();
+                    
+                    document.getElementById('work-log-form').reset();
+                    document.getElementById('log-date').value = date;
+                    document.getElementById('image-preview').innerHTML = '';
+                    
+                    showToast('工作记录保存成功！');
+                    switchPage('dashboard');
+                }
             });
         }
 
         // 删除工作记录
         function deleteWorkLog(id) {
             if (confirm('确定要删除这条工作记录吗？')) {
-                worklogs = worklogs.filter(log => log.id !== id);
-                localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
-                renderWorkLogs();
-                updateStats();
-                showToast('工作记录已删除！');
+                // 检查LeanCloud是否初始化成功
+                if (leancloudInitialized) {
+                    try {
+                        // 从LeanCloud删除
+                        const workLog = AV.Object.createWithoutData('WorkLog', id);
+                        workLog.destroy().then(() => {
+                            console.log('从LeanCloud删除工作记录成功');
+                            
+                            // 重新从LeanCloud加载数据
+                            return loadWorklogsFromLeanCloud();
+                        }).then(() => {
+                            // 更新本地存储作为备份
+                            localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                            
+                            renderWorkLogs();
+                            updateStats();
+                            showToast('工作记录已删除！');
+                        }).catch(error => {
+                            console.error('从LeanCloud删除工作记录失败:', error);
+                            
+                            // 从本地存储删除作为备用方案
+                            worklogs = worklogs.filter(log => log.id !== id);
+                            localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                            
+                            renderWorkLogs();
+                            updateStats();
+                            showToast('工作记录已删除（使用本地存储）！');
+                        });
+                    } catch (error) {
+                        console.error('LeanCloud删除失败:', error);
+                        // 从本地存储删除作为备用方案
+                        worklogs = worklogs.filter(log => log.id !== id);
+                        localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                        
+                        renderWorkLogs();
+                        updateStats();
+                        showToast('工作记录已删除（使用本地存储）！');
+                    }
+                } else {
+                    // LeanCloud未初始化，直接从本地存储删除
+                    worklogs = worklogs.filter(log => log.id !== id);
+                    localStorage.setItem('minimal_worklogs', JSON.stringify(worklogs));
+                    
+                    renderWorkLogs();
+                    updateStats();
+                    showToast('工作记录已删除！');
+                }
             }
         }
 
@@ -1379,26 +1735,112 @@
             });
         }
 
-        // 导出数据
-        function exportData() {
+        // 生成分享链接
+        function generateShareLink() {
             const data = {
                 worklogs: worklogs,
                 exportDate: new Date().toISOString()
             };
             
-            // 创建下载链接
-            const dataStr = JSON.stringify(data, null, 2);
-            const dataBlob = new Blob([dataStr], {type: 'application/json'});
-            const url = URL.createObjectURL(dataBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `workflow_data_${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            // 将数据转换为JSON字符串并编码为URL安全格式
+            const dataStr = JSON.stringify(data);
+            const encodedData = btoa(unescape(encodeURIComponent(dataStr)));
             
-            showToast('数据导出成功！');
+            // 生成分享链接
+            const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encodedData}`;
+            
+            return shareUrl;
+        }
+        
+        // 复制文本到剪贴板
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('链接已复制到剪贴板！');
+            }).catch(err => {
+                console.error('复制失败:', err);
+                showToast('复制失败，请手动复制！', 'error');
+            });
+        }
+        
+        // 导出数据
+        function exportData() {
+            // 显示导出选项对话框
+            const dialog = document.createElement('div');
+            dialog.className = 'fixed inset-0 bg-black/90 z-50 flex items-center justify-center';
+            dialog.innerHTML = `
+                <div class="bg-gray-900 rounded-lg p-6 w-full max-w-md">
+                    <h3 class="text-xl font-light mb-4 text-white">导出选项</h3>
+                    <div class="space-y-4">
+                        <button id="download-file-btn" class="w-full px-4 py-3 bg-primary hover:bg-blue-600 text-white rounded-lg btn-hover transition-all-300">
+                            <i class="fa fa-download mr-2"></i>下载JSON文件
+                        </button>
+                        <button id="generate-link-btn" class="w-full px-4 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-lg btn-hover transition-all-300">
+                            <i class="fa fa-link mr-2"></i>生成分享链接
+                        </button>
+                        <button id="cancel-export-btn" class="w-full px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg btn-hover transition-all-300">
+                            取消
+                        </button>
+                    </div>
+                    
+                    <!-- 分享链接显示区域 -->
+                    <div id="share-link-container" class="mt-4 hidden">
+                        <label class="block text-gray-400 text-sm mb-2">分享链接</label>
+                        <div class="flex">
+                            <input type="text" id="share-link" class="flex-1 bg-gray-800 border border-gray-700 rounded-l-lg px-4 py-2 text-white" readonly>
+                            <button id="copy-link-btn" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded-r-lg">
+                                <i class="fa fa-copy"></i>
+                            </button>
+                        </div>
+                        <p class="text-gray-500 text-xs mt-2">他人可通过此链接查看和导入您的工作记录</p>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(dialog);
+            
+            // 下载文件按钮
+            document.getElementById('download-file-btn').addEventListener('click', function() {
+                const data = {
+                    worklogs: worklogs,
+                    exportDate: new Date().toISOString()
+                };
+                
+                // 创建下载链接
+                const dataStr = JSON.stringify(data, null, 2);
+                const dataBlob = new Blob([dataStr], {type: 'application/json'});
+                const url = URL.createObjectURL(dataBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `workflow_data_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                dialog.remove();
+                showToast('数据导出成功！');
+            });
+            
+            // 生成分享链接按钮
+            document.getElementById('generate-link-btn').addEventListener('click', function() {
+                const shareUrl = generateShareLink();
+                const linkContainer = document.getElementById('share-link-container');
+                const shareLinkInput = document.getElementById('share-link');
+                
+                shareLinkInput.value = shareUrl;
+                linkContainer.classList.remove('hidden');
+            });
+            
+            // 复制链接按钮
+            document.getElementById('copy-link-btn').addEventListener('click', function() {
+                const shareUrl = document.getElementById('share-link').value;
+                copyToClipboard(shareUrl);
+            });
+            
+            // 取消按钮
+            document.getElementById('cancel-export-btn').addEventListener('click', function() {
+                dialog.remove();
+            });
         }
 
         // 导入数据
